@@ -680,37 +680,38 @@ func (r *JSRenderer) handleDOMEvent() {
 	// it is important that we lock around accessing anything that might change (domHandlerMap)
 	// and around the invokation of the handler call itself
 
-	r.eventRWMU.Lock()
-	handlers := r.jsRenderState.domHandlerMap[eventDetail.PositionID]
-	var f func(vugu.DOMEvent)
-	for _, h := range handlers {
-		if h.EventType == eventDetail.EventType && h.Capture == eventDetail.Capture {
-			f = h.Func
-			break
+	go func() {
+		r.eventRWMU.Lock()
+		handlers := r.jsRenderState.domHandlerMap[eventDetail.PositionID]
+		var f func(vugu.DOMEvent)
+		for _, h := range handlers {
+			if h.EventType == eventDetail.EventType && h.Capture == eventDetail.Capture {
+				f = h.Func
+				break
+			}
 		}
-	}
 
-	// make sure we found something, panic if not
-	if f == nil {
+		// make sure we found something, panic if not
+		if f == nil {
+			r.eventRWMU.Unlock()
+			panic(fmt.Errorf("Unable to find event handler for positionID=%q, eventType=%q, capture=%v",
+				eventDetail.PositionID, eventDetail.EventType, eventDetail.Capture))
+		}
+
+		// NOTE: For tinygo support we are not using defer here for now - it would probably be better to do so since
+		// the handler can panic.  However, Vugu program behavior after panicing from an event is currently
+		// undefined so whatever for now.  We'll have to make a decision later about whether or not Vugu
+		// programs should keep running after an event handler panics.  They do in JS after an exception,
+		// but... this is not JS.  Needs more thought.
+
+		// invoke handler
+		f(domEvent)
+
 		r.eventRWMU.Unlock()
-		panic(fmt.Errorf("Unable to find event handler for positionID=%q, eventType=%q, capture=%v",
-			eventDetail.PositionID, eventDetail.EventType, eventDetail.Capture))
-	}
 
-	// NOTE: For tinygo support we are not using defer here for now - it would probably be better to do so since
-	// the handler can panic.  However, Vugu program behavior after panicing from an event is currently
-	// undefined so whatever for now.  We'll have to make a decision later about whether or not Vugu
-	// programs should keep running after an event handler panics.  They do in JS after an exception,
-	// but... this is not JS.  Needs more thought.
-
-	// invoke handler
-	f(domEvent)
-
-	r.eventRWMU.Unlock()
-
-	// TODO: Also give this more thought: For now we just do a non-blocking push to the
-	// eventWaitCh, telling the render loop that a render is required, but if a bunch
-	// of them stack up we don't wait
-	r.sendEventWaitCh()
-
+		// TODO: Also give this more thought: For now we just do a non-blocking push to the
+		// eventWaitCh, telling the render loop that a render is required, but if a bunch
+		// of them stack up we don't wait
+		r.sendEventWaitCh()
+	}()
 }
